@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import Board from './components/Board';
 import CreateTaskBar from './components/CreateTaskBar';
+import SuggestionBar from './components/SuggestionBar';
 import TagManager from './components/TagManager';
 import TagFilter from './components/TagFilter';
 import SearchOverlay from './components/SearchOverlay';
@@ -20,6 +21,9 @@ export default function App() {
   const fetchTags = useStore((s) => s.fetchTags);
   const setSearchOpen = useStore((s) => s.setSearchOpen);
   const toast = useStore((s) => s.toast);
+  const sync = useStore((s) => s.sync);
+  const syncing = useStore((s) => s.syncing);
+  const lastSyncedAt = useStore((s) => s.lastSyncedAt);
 
   const [tagManagerOpen, setTagManagerOpen] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
@@ -88,6 +92,41 @@ export default function App() {
         </div>
         <div className="flex items-center gap-3">
           <TagFilter />
+          {/* Sync button */}
+          <button
+            onClick={sync}
+            disabled={syncing}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border rounded-lg transition-colors ${
+              syncing
+                ? 'border-accent-todo/50 text-accent-todo/50 cursor-wait'
+                : 'border-accent-todo text-accent-todo hover:bg-accent-todo/10'
+            }`}
+            title={lastSyncedAt ? `Last synced: ${new Date(lastSyncedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Sync calendar & emails'}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={syncing ? 'animate-spin' : ''}
+            >
+              <path d="M21.5 2v6h-6" />
+              <path d="M2.5 22v-6h6" />
+              <path d="M2 11.5a10 10 0 0 1 18.8-4.3" />
+              <path d="M22 12.5a10 10 0 0 1-18.8 4.2" />
+            </svg>
+            {syncing ? 'Syncing...' : 'Sync'}
+            {lastSyncedAt && !syncing && (
+              <span className="text-[10px] text-text-muted ml-0.5">
+                {new Date(lastSyncedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            )}
+          </button>
           {/* Search button */}
           <button
             onClick={() => setSearchOpen(true)}
@@ -133,6 +172,9 @@ export default function App() {
 
       {/* Task Creation Bar */}
       <CreateTaskBar />
+
+      {/* Email Suggestion Bar (appears after sync) */}
+      <SuggestionBar />
 
       {/* Board */}
       <main className="flex-1 overflow-hidden">

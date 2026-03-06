@@ -1,6 +1,10 @@
 import { create } from 'zustand';
 import { supabase } from './supabase';
 
+const SYNC_API_URL = import.meta.env.PROD
+  ? '/api/sync'
+  : 'http://localhost:3001/api/sync';
+
 const useStore = create((set, get) => ({
   tasks: [],
   tags: [],
@@ -10,6 +14,11 @@ const useStore = create((set, get) => ({
   searchResults: [],
   searchOpen: false,
   selectedTaskId: null,
+
+  // --- Sync state ---
+  syncing: false,
+  lastSyncedAt: null,
+  emailSuggestions: [],
 
   // --- Helpers ---
   getColumnTasks: (status) => {
@@ -44,6 +53,58 @@ const useStore = create((set, get) => ({
     set({ toast: message });
     setTimeout(() => set({ toast: null }), 3000);
   },
+
+  // --- Sync with AI (calendar + email suggestions) ---
+  sync: async () => {
+    if (get().syncing) return;
+    set({ syncing: true });
+
+    try {
+      const { lastSyncedAt } = get();
+
+      const res = await fetch(SYNC_API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lastSyncedAt }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Sync failed (${res.status})`);
+      }
+
+      const { calendarTasks, emailSuggestions, syncedAt } = await res.json();
+
+      // Create tasks from calendar events
+      for (const ct of calendarTasks) {
+        // Avoid duplicates — check by title + due_date
+        const existing = get().tasks.find(
+          (t) => t.title === ct.title && t.due_date === ct.due_date
+        );
+        if (!existing) {
+          await get().addTask(ct.title, 'todo', ct.due_date || null);
+        }
+      }
+
+      set({
+        emailSuggestions,
+        lastSyncedAt: syncedAt,
+        syncing: false,
+      });
+    } catch (err) {
+      console.error('Sync error:', err);
+      get().showToast(err.message || 'Sync failed');
+      set({ syncing: false });
+    }
+  },
+
+  dismissSuggestion: (index) => {
+    set((s) => ({
+      emailSuggestions: s.emailSuggestions.filter((_, i) => i !== index),
+    }));
+  },
+
+  clearSuggestions: () => set({ emailSuggestions: [] }),
 
   // --- Search ---
   setSearchOpen: (open) =>

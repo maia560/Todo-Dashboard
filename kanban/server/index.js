@@ -1,8 +1,10 @@
+require('dotenv').config();
 const express = require('express');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const { initDb, getDb, save } = require('./db');
+const { handleSync } = require('./sync');
 
 const app = express();
 const httpServer = createServer(app);
@@ -12,6 +14,12 @@ const io = new Server(httpServer, {
 
 app.use(cors({ origin: 'http://localhost:5173' }));
 app.use(express.json());
+
+// =====================
+// AI SYNC ENDPOINT
+// =====================
+
+app.post('/api/sync', handleSync);
 
 // =====================
 // DB HELPERS
