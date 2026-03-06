@@ -1,46 +1,61 @@
 import { useState, useEffect, useRef } from 'react';
+import { supabase } from '../supabase';
 
 export default function CalendarPanel({ isOpen }) {
   const timelineRef = useRef(null);
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  const events = [
-    {
-      id: 1,
-      subject: 'wiq: Agile ways of working',
-      start: '2026-03-04T10:30:00+11:00',
-      end: '2026-03-04T11:30:00+11:00',
-      location: 'The Cincinnati (SYD)',
-      organizer: 'James Guo',
-      isOrganizer: false,
-    },
-    {
-      id: 2,
-      subject: 'Yuliia / Maia Catch Up',
-      start: '2026-03-04T13:00:00+11:00',
-      end: '2026-03-04T13:15:00+11:00',
-      location: 'Google Meet',
-      organizer: 'You',
-      isOrganizer: true,
-    },
-    {
-      id: 3,
-      subject: 'wiq: GenAI Tools',
-      start: '2026-03-04T14:00:00+11:00',
-      end: '2026-03-04T15:30:00+11:00',
-      location: 'The Alice (SYD)',
-      organizer: 'James Guo',
-      isOrganizer: false,
-    },
-    {
-      id: 4,
-      subject: 'Matt / Maia Catch up',
-      start: '2026-03-05T10:00:00+11:00',
-      end: '2026-03-05T10:15:00+11:00',
-      location: null,
-      organizer: 'You',
-      isOrganizer: true,
-    },
-  ];
+  // Fetch today's calendar events from Supabase
+  useEffect(() => {
+    async function fetchEvents() {
+      setLoading(true);
+      const today = new Date().toISOString().slice(0, 10);
+      const dayStart = `${today}T00:00:00`;
+      const dayEnd = `${today}T23:59:59`;
+
+      const { data, error } = await supabase
+        .from('calendar_events')
+        .select('*')
+        .gte('start_time', dayStart)
+        .lte('start_time', dayEnd)
+        .order('start_time');
+
+      if (!error && data) {
+        setEvents(
+          data.map((e) => ({
+            id: e.id,
+            subject: e.subject,
+            start: e.start_time,
+            end: e.end_time,
+            location: e.location,
+            organizer: e.organizer,
+            isOrganizer: e.is_organizer,
+          }))
+        );
+      }
+      setLoading(false);
+    }
+
+    fetchEvents();
+
+    // Subscribe to realtime changes on calendar_events
+    const channel = supabase
+      .channel('calendar-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'calendar_events' },
+        () => {
+          // Re-fetch on any change
+          fetchEvents();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   const START_HOUR = 8;
   const END_HOUR = 17;
@@ -136,101 +151,112 @@ export default function CalendarPanel({ isOpen }) {
 
           {/* Timeline */}
           <div ref={timelineRef} className="flex-1 overflow-y-auto pt-2">
-            <div className="relative" style={{ height: TOTAL_HEIGHT + 24 }}>
-              {/* Hour grid */}
-              {hours_arr.map(({ hour, label }) => {
-                const top = ((hour - START_HOUR) / TOTAL_HOURS) * TOTAL_HEIGHT;
-                return (
-                  <div key={hour} className="absolute left-0 right-0" style={{ top }}>
-                    <div className="flex items-center">
-                      <span className="text-[9px] text-text-muted w-11 text-right pr-1.5 shrink-0 -translate-y-1/2">
-                        {label}
-                      </span>
-                      <div className="flex-1 border-t border-column-border/40" />
-                    </div>
-                  </div>
-                );
-              })}
-
-              {/* Now line */}
-              {nowOffset !== null && (
-                <div className="absolute left-11 right-0 z-20 flex items-center" style={{ top: nowOffset }}>
-                  <div className="w-2 h-2 rounded-full bg-danger -ml-1 shrink-0" />
-                  <div className="flex-1 border-t border-danger" />
-                </div>
-              )}
-
-              {/* Events */}
-              {todayEvents.map((event) => {
-                const top = timeToOffset(event.start);
-                const height = eventHeight(event.start, event.end);
-                const active = isNow(event.start, event.end);
-                const compact = height < 40;
-
-                return (
-                  <div
-                    key={event.id}
-                    className={`absolute left-12 right-2 rounded-lg px-2 overflow-hidden transition-colors border ${
-                      active
-                        ? 'bg-accent-todo/15 border-accent-todo/40'
-                        : 'bg-accent-progress/10 border-accent-progress/20 hover:bg-accent-progress/15'
-                    }`}
-                    style={{
-                      top,
-                      height,
-                      paddingTop: compact ? 2 : 5,
-                      paddingBottom: compact ? 2 : 5,
-                    }}
-                  >
-                    {compact ? (
-                      <div className="flex items-center gap-1 h-full">
-                        {active && (
-                          <span className="text-[7px] font-bold text-accent-todo bg-accent-todo/20 px-1 rounded shrink-0">
-                            NOW
-                          </span>
-                        )}
-                        <span className="text-[9px] font-medium text-text-primary truncate">
-                          {event.subject}
+            {loading ? (
+              <div className="flex items-center justify-center h-32">
+                <span className="text-xs text-text-muted">Loading events...</span>
+              </div>
+            ) : todayEvents.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-32 gap-2">
+                <span className="text-xs text-text-muted">No events today</span>
+                <span className="text-[10px] text-text-muted">Ask Claude to sync your calendar</span>
+              </div>
+            ) : (
+              <div className="relative" style={{ height: TOTAL_HEIGHT + 24 }}>
+                {/* Hour grid */}
+                {hours_arr.map(({ hour, label }) => {
+                  const top = ((hour - START_HOUR) / TOTAL_HOURS) * TOTAL_HEIGHT;
+                  return (
+                    <div key={hour} className="absolute left-0 right-0" style={{ top }}>
+                      <div className="flex items-center">
+                        <span className="text-[9px] text-text-muted w-11 text-right pr-1.5 shrink-0 -translate-y-1/2">
+                          {label}
                         </span>
+                        <div className="flex-1 border-t border-column-border/40" />
                       </div>
-                    ) : (
-                      <>
-                        <div className="flex items-center gap-1">
-                          <span className={`text-[9px] font-medium ${active ? 'text-accent-todo' : 'text-text-muted'}`}>
-                            {formatTime(event.start)} – {formatTime(event.end)}
-                          </span>
+                    </div>
+                  );
+                })}
+
+                {/* Now line */}
+                {nowOffset !== null && (
+                  <div className="absolute left-11 right-0 z-20 flex items-center" style={{ top: nowOffset }}>
+                    <div className="w-2 h-2 rounded-full bg-danger -ml-1 shrink-0" />
+                    <div className="flex-1 border-t border-danger" />
+                  </div>
+                )}
+
+                {/* Events */}
+                {todayEvents.map((event) => {
+                  const top = timeToOffset(event.start);
+                  const height = eventHeight(event.start, event.end);
+                  const active = isNow(event.start, event.end);
+                  const compact = height < 40;
+
+                  return (
+                    <div
+                      key={event.id}
+                      className={`absolute left-12 right-2 rounded-lg px-2 overflow-hidden transition-colors border ${
+                        active
+                          ? 'bg-accent-todo/15 border-accent-todo/40'
+                          : 'bg-accent-progress/10 border-accent-progress/20 hover:bg-accent-progress/15'
+                      }`}
+                      style={{
+                        top,
+                        height,
+                        paddingTop: compact ? 2 : 5,
+                        paddingBottom: compact ? 2 : 5,
+                      }}
+                    >
+                      {compact ? (
+                        <div className="flex items-center gap-1 h-full">
                           {active && (
-                            <span className="text-[7px] font-bold text-accent-todo bg-accent-todo/20 px-1 rounded">
+                            <span className="text-[7px] font-bold text-accent-todo bg-accent-todo/20 px-1 rounded shrink-0">
                               NOW
                             </span>
                           )}
+                          <span className="text-[9px] font-medium text-text-primary truncate">
+                            {event.subject}
+                          </span>
                         </div>
-                        <p className="text-[10px] font-medium text-text-primary mt-0.5 leading-tight truncate">
-                          {event.subject}
-                        </p>
-                        {event.location && height >= 52 && (
-                          <div className="flex items-center gap-1 mt-0.5">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="7" height="7" viewBox="0 0 24 24"
-                              fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                              className="text-text-muted shrink-0">
-                              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
-                              <circle cx="12" cy="10" r="3" />
-                            </svg>
-                            <span className="text-[8px] text-text-muted truncate">{event.location}</span>
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-1">
+                            <span className={`text-[9px] font-medium ${active ? 'text-accent-todo' : 'text-text-muted'}`}>
+                              {formatTime(event.start)} – {formatTime(event.end)}
+                            </span>
+                            {active && (
+                              <span className="text-[7px] font-bold text-accent-todo bg-accent-todo/20 px-1 rounded">
+                                NOW
+                              </span>
+                            )}
                           </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+                          <p className="text-[10px] font-medium text-text-primary mt-0.5 leading-tight truncate">
+                            {event.subject}
+                          </p>
+                          {event.location && height >= 52 && (
+                            <div className="flex items-center gap-1 mt-0.5">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="7" height="7" viewBox="0 0 24 24"
+                                fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                                className="text-text-muted shrink-0">
+                                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                                <circle cx="12" cy="10" r="3" />
+                              </svg>
+                              <span className="text-[8px] text-text-muted truncate">{event.location}</span>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Footer */}
           <div className="px-3 py-2 border-t border-column-border/50 shrink-0">
             <p className="text-[9px] text-text-muted text-center">
-              Outlook · Ask Claude to refresh
+              Outlook · Ask Claude to sync
             </p>
           </div>
         </>

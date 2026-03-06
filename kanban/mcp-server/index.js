@@ -107,6 +107,63 @@ const TOOLS = [
       required: ['task_id', 'tag_id'],
     },
   },
+  {
+    name: 'sync_calendar_events',
+    description: 'Replace all calendar events for a given date with new ones. Use this after reading the user\'s Outlook calendar to push events into the Kanban board\'s calendar overlay. Deletes existing events for that date first, then inserts the new ones.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        date: {
+          type: 'string',
+          description: 'The date to sync events for, in YYYY-MM-DD format (required)',
+        },
+        events: {
+          type: 'array',
+          description: 'Array of calendar events to insert',
+          items: {
+            type: 'object',
+            properties: {
+              subject: { type: 'string', description: 'Event subject/title (required)' },
+              start_time: { type: 'string', description: 'Event start time in ISO 8601 format (required)' },
+              end_time: { type: 'string', description: 'Event end time in ISO 8601 format (required)' },
+              location: { type: 'string', description: 'Event location (optional)' },
+              organizer: { type: 'string', description: 'Organizer name (optional)' },
+              is_organizer: { type: 'boolean', description: 'Whether the user is the organizer (optional, defaults to false)' },
+            },
+            required: ['subject', 'start_time', 'end_time'],
+          },
+        },
+      },
+      required: ['date', 'events'],
+    },
+  },
+  {
+    name: 'list_calendar_events',
+    description: 'List calendar events for a specific date, or today if no date provided.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        date: {
+          type: 'string',
+          description: 'Date in YYYY-MM-DD format. Defaults to today.',
+        },
+      },
+    },
+  },
+  {
+    name: 'clear_calendar_events',
+    description: 'Delete all calendar events for a specific date.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        date: {
+          type: 'string',
+          description: 'Date in YYYY-MM-DD format (required)',
+        },
+      },
+      required: ['date'],
+    },
+  },
 ];
 
 // ─── Tool handlers ───────────────────────────────────────────
@@ -236,6 +293,69 @@ async function handleTool(name, args) {
         .eq('tag_id', args.tag_id);
       if (error) throw new Error(error.message);
       return { success: true, task_id: args.task_id, tag_id: args.tag_id };
+    }
+
+    case 'sync_calendar_events': {
+      const dateStr = args.date;
+      const dayStart = `${dateStr}T00:00:00`;
+      const dayEnd = `${dateStr}T23:59:59`;
+
+      // Delete existing events for this date
+      const { error: delErr } = await supabase
+        .from('calendar_events')
+        .delete()
+        .gte('start_time', dayStart)
+        .lte('start_time', dayEnd);
+      if (delErr) throw new Error(delErr.message);
+
+      // Insert new events
+      if (args.events && args.events.length > 0) {
+        const rows = args.events.map((e) => ({
+          subject: e.subject,
+          start_time: e.start_time,
+          end_time: e.end_time,
+          location: e.location || null,
+          organizer: e.organizer || null,
+          is_organizer: e.is_organizer || false,
+        }));
+
+        const { data, error: insErr } = await supabase
+          .from('calendar_events')
+          .insert(rows)
+          .select();
+        if (insErr) throw new Error(insErr.message);
+        return { synced: data.length, events: data };
+      }
+
+      return { synced: 0, events: [] };
+    }
+
+    case 'list_calendar_events': {
+      const d = args.date || new Date().toISOString().slice(0, 10);
+      const dayStart = `${d}T00:00:00`;
+      const dayEnd = `${d}T23:59:59`;
+
+      const { data: events, error } = await supabase
+        .from('calendar_events')
+        .select('*')
+        .gte('start_time', dayStart)
+        .lte('start_time', dayEnd)
+        .order('start_time');
+      if (error) throw new Error(error.message);
+      return { date: d, events };
+    }
+
+    case 'clear_calendar_events': {
+      const dayStart = `${args.date}T00:00:00`;
+      const dayEnd = `${args.date}T23:59:59`;
+
+      const { error } = await supabase
+        .from('calendar_events')
+        .delete()
+        .gte('start_time', dayStart)
+        .lte('start_time', dayEnd);
+      if (error) throw new Error(error.message);
+      return { cleared: true, date: args.date };
     }
 
     default:
