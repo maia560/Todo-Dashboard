@@ -3,7 +3,6 @@ import Board from './components/Board';
 import CreateTaskBar from './components/CreateTaskBar';
 import SuggestionBar from './components/SuggestionBar';
 import TagManager from './components/TagManager';
-import TagFilter from './components/TagFilter';
 import SearchOverlay from './components/SearchOverlay';
 import useStore from './store';
 import { supabase } from './supabase';
@@ -21,13 +20,23 @@ export default function App() {
   const fetchTags = useStore((s) => s.fetchTags);
   const setSearchOpen = useStore((s) => s.setSearchOpen);
   const toast = useStore((s) => s.toast);
-  const sync = useStore((s) => s.sync);
-  const syncing = useStore((s) => s.syncing);
-  const lastSyncedAt = useStore((s) => s.lastSyncedAt);
+  const hidePrivate = useStore((s) => s.hidePrivate);
+  const toggleHidePrivate = useStore((s) => s.toggleHidePrivate);
 
   const [tagManagerOpen, setTagManagerOpen] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [dailyFact, setDailyFact] = useState('');
+  const [darkMode, setDarkMode] = useState(() => {
+    const saved = localStorage.getItem('kanban-theme');
+    return saved ? saved === 'dark' : true;
+  });
+
+  // Apply theme class to html element
+  useEffect(() => {
+    document.documentElement.classList.toggle('light', !darkMode);
+    document.body.style.backgroundColor = darkMode ? '#0f1117' : '#f5f6f8';
+    localStorage.setItem('kanban-theme', darkMode ? 'dark' : 'light');
+  }, [darkMode]);
 
   useEffect(() => {
     fetch('https://uselessfacts.jsph.pl/api/v2/today?language=en')
@@ -48,7 +57,6 @@ export default function App() {
 
     const s = useStore.getState;
 
-    // Subscribe to Supabase Realtime changes on all 4 tables
     const channel = supabase
       .channel('kanban-realtime')
       .on(
@@ -91,42 +99,33 @@ export default function App() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <TagFilter />
-          {/* Sync button */}
+          {/* Private toggle */}
           <button
-            onClick={sync}
-            disabled={syncing}
+            onClick={toggleHidePrivate}
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border rounded-lg transition-colors ${
-              syncing
-                ? 'border-accent-todo/50 text-accent-todo/50 cursor-wait'
-                : 'border-accent-todo text-accent-todo hover:bg-accent-todo/10'
+              hidePrivate
+                ? 'border-accent-todo text-accent-todo bg-accent-todo/10'
+                : 'text-text-secondary border-column-border hover:bg-column-bg hover:text-text-primary'
             }`}
-            title={lastSyncedAt ? `Last synced: ${new Date(lastSyncedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Sync calendar & emails'}
+            title={hidePrivate ? 'Personal/Private tasks are hidden' : 'Showing all tasks'}
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className={syncing ? 'animate-spin' : ''}
-            >
-              <path d="M21.5 2v6h-6" />
-              <path d="M2.5 22v-6h6" />
-              <path d="M2 11.5a10 10 0 0 1 18.8-4.3" />
-              <path d="M22 12.5a10 10 0 0 1-18.8 4.2" />
-            </svg>
-            {syncing ? 'Syncing...' : 'Sync'}
-            {lastSyncedAt && !syncing && (
-              <span className="text-[10px] text-text-muted ml-0.5">
-                {new Date(lastSyncedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </span>
+            {hidePrivate ? (
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+                fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                <line x1="1" y1="1" x2="23" y2="23" />
+              </svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+                fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
             )}
+            {hidePrivate ? 'Private hidden' : 'Private shown'}
           </button>
+
           {/* Search button */}
           <button
             onClick={() => setSearchOpen(true)}
@@ -138,6 +137,7 @@ export default function App() {
             </svg>
             <kbd className="text-[10px] text-text-muted">/</kbd>
           </button>
+
           {/* Calendar button */}
           <button
             onClick={() => setCalendarOpen(!calendarOpen)}
@@ -155,6 +155,7 @@ export default function App() {
             </svg>
             Calendar
           </button>
+
           {/* Tags button */}
           <button
             onClick={() => setTagManagerOpen(true)}
@@ -166,6 +167,33 @@ export default function App() {
               <line x1="7" y1="7" x2="7.01" y2="7" />
             </svg>
             Tags
+          </button>
+
+          {/* Theme toggle */}
+          <button
+            onClick={() => setDarkMode(!darkMode)}
+            className="inline-flex items-center gap-1.5 p-1.5 text-text-secondary border border-column-border rounded-lg hover:bg-column-bg hover:text-text-primary transition-colors"
+            title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {darkMode ? (
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+                fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="5" />
+                <line x1="12" y1="1" x2="12" y2="3" />
+                <line x1="12" y1="21" x2="12" y2="23" />
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                <line x1="1" y1="12" x2="3" y2="12" />
+                <line x1="21" y1="12" x2="23" y2="12" />
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+              </svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+                fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+              </svg>
+            )}
           </button>
         </div>
       </header>

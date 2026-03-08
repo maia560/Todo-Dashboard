@@ -14,6 +14,7 @@ const useStore = create((set, get) => ({
   searchResults: [],
   searchOpen: false,
   selectedTaskId: null,
+  hidePrivate: false,
 
   // --- Sync state ---
   syncing: false,
@@ -22,8 +23,17 @@ const useStore = create((set, get) => ({
 
   // --- Helpers ---
   getColumnTasks: (status) => {
-    const { tasks, filterTagIds } = get();
+    const { tasks, filterTagIds, hidePrivate } = get();
     let filtered = tasks.filter((t) => t.status === status);
+
+    if (hidePrivate) {
+      filtered = filtered.filter((t) =>
+        !(t.tags || []).some((tag) => {
+          const name = tag.name?.toLowerCase();
+          return name === 'personal' || name === 'private';
+        })
+      );
+    }
 
     if (filterTagIds.length > 0) {
       filtered = filtered.filter((t) =>
@@ -33,6 +43,8 @@ const useStore = create((set, get) => ({
 
     return filtered.sort((a, b) => a.position - b.position);
   },
+
+  toggleHidePrivate: () => set((s) => ({ hidePrivate: !s.hidePrivate })),
 
   toggleTagFilter: (tagId) => {
     set((s) => {

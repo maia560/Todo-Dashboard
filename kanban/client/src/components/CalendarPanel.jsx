@@ -1,61 +1,83 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '../supabase';
+
+function getDateStr(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function addDays(date, days) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
 
 export default function CalendarPanel({ isOpen }) {
   const timelineRef = useRef(null);
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selectedDate, setSelectedDate] = useState(new Date());
 
-  // Fetch today's calendar events from Supabase
-  useEffect(() => {
-    async function fetchEvents() {
-      setLoading(true);
-      const today = new Date().toISOString().slice(0, 10);
-      const dayStart = `${today}T00:00:00`;
-      const dayEnd = `${today}T23:59:59`;
+  const today = new Date();
+  const todayStr = getDateStr(today);
+  const selectedStr = getDateStr(selectedDate);
+  const isToday = selectedStr === todayStr;
 
-      const { data, error } = await supabase
-        .from('calendar_events')
-        .select('*')
-        .gte('start_time', dayStart)
-        .lte('start_time', dayEnd)
-        .order('start_time');
+  // How many days ahead from today (0 = today, max 4 = 5 days total)
+  const dayOffset = Math.round((selectedDate - new Date(todayStr)) / 86400000);
+  const canGoBack = dayOffset > 0;
+  const canGoForward = dayOffset < 4;
 
-      if (!error && data) {
-        setEvents(
-          data.map((e) => ({
-            id: e.id,
-            subject: e.subject,
-            start: e.start_time,
-            end: e.end_time,
-            location: e.location,
-            organizer: e.organizer,
-            isOrganizer: e.is_organizer,
-          }))
-        );
-      }
-      setLoading(false);
+  const goBack = () => {
+    if (canGoBack) setSelectedDate(addDays(selectedDate, -1));
+  };
+  const goForward = () => {
+    if (canGoForward) setSelectedDate(addDays(selectedDate, 1));
+  };
+
+  const fetchEvents = useCallback(async () => {
+    setLoading(true);
+    const dayStart = `${selectedStr}T00:00:00`;
+    const dayEnd = `${selectedStr}T23:59:59`;
+
+    const { data, error } = await supabase
+      .from('calendar_events')
+      .select('*')
+      .gte('start_time', dayStart)
+      .lte('start_time', dayEnd)
+      .order('start_time');
+
+    if (!error && data) {
+      setEvents(
+        data.map((e) => ({
+          id: e.id,
+          subject: e.subject,
+          start: e.start_time,
+          end: e.end_time,
+          location: e.location,
+          organizer: e.organizer,
+          isOrganizer: e.is_organizer,
+        }))
+      );
     }
+    setLoading(false);
+  }, [selectedStr]);
 
+  useEffect(() => {
     fetchEvents();
 
-    // Subscribe to realtime changes on calendar_events
     const channel = supabase
-      .channel('calendar-realtime')
+      .channel(`calendar-realtime-${selectedStr}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'calendar_events' },
-        () => {
-          // Re-fetch on any change
-          fetchEvents();
-        }
+        () => fetchEvents()
       )
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [selectedStr, fetchEvents]);
 
   const START_HOUR = 8;
   const END_HOUR = 17;
@@ -63,10 +85,9 @@ export default function CalendarPanel({ isOpen }) {
   const HOUR_HEIGHT = 64;
   const TOTAL_HEIGHT = TOTAL_HOURS * HOUR_HEIGHT;
 
-  const todayStr = new Date().toDateString();
-  const todayEvents = events.filter((e) => {
+  const dayEvents = events.filter((e) => {
     const s = new Date(e.start);
-    return s.toDateString() === todayStr;
+    return getDateStr(s) === selectedStr;
   });
 
   function timeToOffset(isoStr) {
@@ -89,6 +110,7 @@ export default function CalendarPanel({ isOpen }) {
   }
 
   function isNow(start, end) {
+    if (!isToday) return false;
     const now = new Date();
     return now >= new Date(start) && now <= new Date(end);
   }
@@ -96,6 +118,10 @@ export default function CalendarPanel({ isOpen }) {
   const [nowOffset, setNowOffset] = useState(null);
   useEffect(() => {
     function updateNow() {
+      if (!isToday) {
+        setNowOffset(null);
+        return;
+      }
       const now = new Date();
       const hours = now.getHours() + now.getMinutes() / 60;
       if (hours >= START_HOUR && hours <= END_HOUR) {
@@ -107,17 +133,17 @@ export default function CalendarPanel({ isOpen }) {
     updateNow();
     const interval = setInterval(updateNow, 60000);
     return () => clearInterval(interval);
-  }, []);
+  }, [isToday]);
 
   useEffect(() => {
-    if (isOpen && nowOffset !== null && timelineRef.current) {
+    if (isOpen && isToday && nowOffset !== null && timelineRef.current) {
       setTimeout(() => {
         timelineRef.current.scrollTo({ top: Math.max(0, nowOffset - 100), behavior: 'smooth' });
       }, 300);
     }
-  }, [isOpen, nowOffset]);
+  }, [isOpen, isToday, nowOffset]);
 
-  const today = new Date().toLocaleDateString('en-AU', {
+  const dateLabel = selectedDate.toLocaleDateString('en-AU', {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
@@ -146,7 +172,50 @@ export default function CalendarPanel({ isOpen }) {
                 Calendar
               </h2>
             </div>
-            <p className="text-[10px] text-text-muted mt-1 ml-4">{today}</p>
+
+            {/* Date navigation */}
+            <div className="flex items-center justify-between mt-2 ml-4">
+              <button
+                onClick={goBack}
+                disabled={!canGoBack}
+                className={`p-0.5 rounded transition-colors ${
+                  canGoBack
+                    ? 'text-text-secondary hover:text-text-primary hover:bg-column-border/30'
+                    : 'text-column-border cursor-default'
+                }`}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+                  fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="15 18 9 12 15 6" />
+                </svg>
+              </button>
+
+              <div className="text-center">
+                <p className="text-[10px] text-text-muted leading-tight">
+                  {isToday ? 'Today' : dateLabel}
+                </p>
+                {isToday && (
+                  <p className="text-[9px] text-text-muted/60 leading-tight">
+                    {dateLabel}
+                  </p>
+                )}
+              </div>
+
+              <button
+                onClick={goForward}
+                disabled={!canGoForward}
+                className={`p-0.5 rounded transition-colors ${
+                  canGoForward
+                    ? 'text-text-secondary hover:text-text-primary hover:bg-column-border/30'
+                    : 'text-column-border cursor-default'
+                }`}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+                  fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+              </button>
+            </div>
           </div>
 
           {/* Timeline */}
@@ -155,9 +224,9 @@ export default function CalendarPanel({ isOpen }) {
               <div className="flex items-center justify-center h-32">
                 <span className="text-xs text-text-muted">Loading events...</span>
               </div>
-            ) : todayEvents.length === 0 ? (
+            ) : dayEvents.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-32 gap-2">
-                <span className="text-xs text-text-muted">No events today</span>
+                <span className="text-xs text-text-muted">No events {isToday ? 'today' : 'this day'}</span>
                 <span className="text-[10px] text-text-muted">Ask Claude to sync your calendar</span>
               </div>
             ) : (
@@ -177,8 +246,8 @@ export default function CalendarPanel({ isOpen }) {
                   );
                 })}
 
-                {/* Now line */}
-                {nowOffset !== null && (
+                {/* Now line — only on today */}
+                {isToday && nowOffset !== null && (
                   <div className="absolute left-11 right-0 z-20 flex items-center" style={{ top: nowOffset }}>
                     <div className="w-2 h-2 rounded-full bg-danger -ml-1 shrink-0" />
                     <div className="flex-1 border-t border-danger" />
@@ -186,7 +255,7 @@ export default function CalendarPanel({ isOpen }) {
                 )}
 
                 {/* Events */}
-                {todayEvents.map((event) => {
+                {dayEvents.map((event) => {
                   const top = timeToOffset(event.start);
                   const height = eventHeight(event.start, event.end);
                   const active = isNow(event.start, event.end);
